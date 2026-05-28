@@ -27,7 +27,7 @@ func (rw *ResponseWriter) WriteHeader(statusCode int) {
 
 func (rw *ResponseWriter) GetStatusCode() int {
 	if rw.StatusCode == StatusCodeUninitialized {
-		panic("StatusCode not set. WriteHeader must be called before GetStatusCode.") 
+		return http.StatusOK
 	}
 	return rw.StatusCode
 }
