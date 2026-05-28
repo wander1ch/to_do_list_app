@@ -1,0 +1,86 @@
+package core_logger
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"time"
+
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+)
+
+type loggerContextKey struct{}
+
+var (
+	key = loggerContextKey{}
+)
+
+type Logger struct {
+	*zap.Logger
+
+	file *os.File
+}
+
+func Context(ctx context.Context, log *Logger) context.Context {
+	return context.WithValue(ctx, key, log)
+}
+
+func FromContext(ctx context.Context) *Logger {
+	log, ok := ctx.Value(key).(*Logger)
+	if !ok {
+		panic("logger not found in context")
+	}
+	return log
+}
+
+func NewLogger(config LoggerConfig) (*Logger, error) {
+	zapLevel := zap.NewAtomicLevel() 
+	if err := zapLevel.UnmarshalText([]byte(config.Level)); err != nil {
+		return nil, fmt.Errorf("invalid log level: %w", err)
+	}
+
+	if err := os.MkdirAll(config.Folder, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create log folder: %w", err)
+	}
+	timestamp := time.Now().UTC().Format("2006-01-02T15-04-05.000000")
+	logFilePath := filepath.Join(
+		config.Folder,
+		fmt.Sprintf("app-%s.log", timestamp),
+	)
+	logFile, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open log file: %w", err)
+	}
+	
+	encoderConfig := zap.NewDevelopmentEncoderConfig()
+	encoderConfig.EncodeTime = zapcore.TimeEncoderOfLayout("2006-01-02T15:04:05.000000Z07:00")
+
+	zapEncoder := zapcore.NewConsoleEncoder(encoderConfig)
+	core := zapcore.NewTee(
+		zapcore.NewCore(zapEncoder, zapcore.AddSync(os.Stdout), zapLevel),
+		zapcore.NewCore(zapEncoder, zapcore.AddSync(logFile), zapLevel),
+	)
+
+	zapLogger := zap.New(core, zap.AddCaller())
+	return &Logger{
+		Logger: zapLogger,
+		file: logFile,
+	}, nil
+}
+
+func (l *Logger) With(fields ...zap.Field) *Logger {
+	return &Logger{
+		Logger: l.Logger.With(fields...),
+		file: l.file,
+	}
+}
+
+
+func (l *Logger) Close() {
+	if err := l.file.Close(); err != nil {
+		fmt.Print("Failed to close log file", err)
+	}
+}
+
